@@ -1,0 +1,10 @@
+services:
+  pixeltext:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MAX_UPLOAD_MB=15
+      - OCR_LANGUAGES=en,hi
+      - ALLOW_ORIGINS=*
+    restart: unless-stopped
