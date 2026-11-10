@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PixelText AI — Photo Text Editor</title>
+<style>
+:root{--bg:#f4f5f8;--panel:#fff;--ink:#171923;--muted:#687083;--line:#e5e7ee;--accent:#595be2}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px system-ui,Arial;color:var(--ink)}
+header{height:62px;background:#171923;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 22px}
+.brand{font-weight:800}.brand span{color:#a5a6ff}.muted{color:var(--muted);font-size:12px}
+main{max-width:1240px;margin:22px auto;padding:0 16px;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:15px;padding:15px;min-width:0}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button,.filebtn{border:0;border-radius:9px;padding:10px 12px;background:#eeeefe;color:#30318d;font-weight:650;cursor:pointer;font-size:13px}
+button.primary{background:var(--accent);color:#fff}button.dark{background:#24283a;color:#fff}button:disabled{opacity:.45;cursor:not-allowed}
+input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+input[type=color]{height:40px;padding:4px}input[type=range]{padding:0}
+.stage{background:#e9ebf1;border:1px dashed #c9ccda;border-radius:11px;min-height:400px;display:flex;align-items:center;justify-content:center;overflow:auto;padding:12px}
+#work{position:relative;display:inline-block;line-height:0;max-width:100%}#photo{display:block;max-width:100%;height:auto;box-shadow:0 3px 15px #1112}
+#overlay{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.region{position:absolute;border:1.5px dashed #5659e6;background:#5659e61a;cursor:pointer;line-height:1.2;overflow:hidden}
+.region.active{border:2px solid #e05252;background:#e0525215}
+.layer{position:absolute;white-space:pre;cursor:move;line-height:1.15;transform-origin:top left;border:1px dashed transparent}
+.layer.active{border-color:#595be2;background:#595be20d}
+.empty{text-align:center;color:var(--muted);padding:60px 10px}.empty b{display:block;color:#33394a;margin:9px}
+.field{margin:12px 0}.field label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}
+.list{display:flex;flex-direction:column;gap:6px}.item{padding:9px;border:1px solid var(--line);border-radius:8px;font-size:13px;cursor:pointer;overflow-wrap:anywhere}.item.active{border-color:var(--accent);background:#f1f1ff}
+.status{min-height:20px;margin-top:10px;font-size:12px;color:var(--muted);line-height:1.5}
+.note{font-size:12px;color:var(--muted);line-height:1.55;margin-top:14px}
+@media(max-width:780px){main{grid-template-columns:1fr;margin:12px auto}header{padding:0 14px}.stage{min-height:260px}}
+</style>
+</head>
+<body>
+<header><div class="brand">✦ PixelText <span>AI</span></div><div class="muted" style="color:#c9cbda">OCR-assisted photo editor</div></header>
+<main>
+<section class="panel">
+ <div class="toolbar">
+  <label class="filebtn" for="upload">＋ Upload photo</label><input id="upload" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+  <button id="detect" class="dark" disabled>Detect text</button>
+  <button id="remove" disabled>Remove selected text</button>
+  <button id="add" disabled>＋ Add text</button>
+  <button id="export" class="primary" disabled>Export PNG</button>
+ </div>
+ <div class="stage" id="stage"><div class="empty"><b>Upload a photo to start</b>Text detection and editing will appear here.</div></div>
+ <div class="status" id="status">Ready. Images are sent to your own backend for OCR and inpainting.</div>
+ <div class="note">Workflow: detect text → select a region → remove text → add replacement text. Removal currently uses OpenCV Telea inpainting, which works best on plain backgrounds. It is not generative AI and may leave artifacts on patterned fabric or detailed artwork.</div>
+</section>
+<aside class="panel">
+ <h3 style="margin:0 0 14px">Selected text / layer</h3>
+ <div class="field"><label>Text</label><input id="text" placeholder="Select a detected region or add text" disabled></div>
+ <div class="field"><label>Font</label><select id="font" disabled><option>Arial</option><option>Georgia</option><option>Times New Roman</option><option>Verdana</option><option>Trebuchet MS</option><option>Courier New</option></select></div>
+ <div class="field"><label>Size: <span id="sizeVal">32</span> px</label><input id="size" type="range" min="8" max="180" value="32" disabled></div>
+ <div class="field"><label>Colour</label><input id="color" type="color" value="#171717" disabled></div>
+ <div class="field"><label>Alignment</label><select id="align" disabled><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></div>
+ <div class="field"><button id="delete" disabled>Delete text layer</button></div>
+ <h3 style="margin:20px 0 10px">Detected regions</h3><div class="list" id="regions"><div class="muted">No regions detected.</div></div>
+ <h3 style="margin:20px 0 10px">Text layers</h3><div class="list" id="layers"><div class="muted">No text layers.</div></div>
+</aside>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let imageFile=null,imageUrl=null,imageW=0,imageH=0,regions=[],layers=[],selected={type:null,id:null},drag=null;
+const stage=$('stage');
+function status(s){$('status').textContent=s}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function enable(v){['detect','add','export'].forEach(id=>$(id).disabled=!v)}
+function getSelected(){return selected.type==='layer'?layers.find(x=>x.id===selected.id):selected.type==='region'?regions.find(x=>x.id===selected.id):null}
+function syncControls(){let o=getSelected(),isLayer=selected.type==='layer';['text','font','size','color','align','delete'].forEach(id=>$(id).disabled=!o||!isLayer);if(o){$('text').value=o.text||'';$('font').value=o.font||'Arial';$('size').value=o.size||32;$('sizeVal').textContent=o.size||32;$('color').value=o.color||'#171717';$('align').value=o.align||'left'}render();renderLists()}
+function render(){
+ if(!imageUrl)return;
+ let old=$('work');if(old)old.remove();
+ let work=document.createElement('div');work.id='work';work.style.width='min(100%, '+imageW+'px)';
+ let img=document.createElement('img');img.id='photo';img.src=imageUrl;img.alt='Uploaded photo';img.style.width='100%';img.draggable=false;work.appendChild(img);
+ let overlay=document.createElement('div');overlay.id='overlay';work.appendChild(overlay);
+ img.onload=()=>{let displayW=img.clientWidth,displayH=img.clientHeight;overlay.style.width=displayW+'px';overlay.style.height=displayH+'px';
+ regions.forEach(r=>{let b=r.box,d=document.createElement('div');d.className='region'+(selected.type==='region'&&selected.id===r.id?' active':'');d.style.left=(b.x/imageW*displayW)+'px';d.style.top=(b.y/imageH*displayH)+'px';d.style.width=(b.width/imageW*displayW)+'px';d.style.height=(b.height/imageH*displayH)+'px';d.title=r.text+' · '+Math.round(r.confidence*100)+'%';d.onclick=e=>{e.stopPropagation();selected={type:'region',id:r.id};syncControls()};overlay.appendChild(d)});
+ layers.forEach(l=>{let d=document.createElement('div');d.className='layer'+(selected.type==='layer'&&selected.id===l.id?' active':'');d.textContent=l.text;d.style.left=(l.x/imageW*displayW)+'px';d.style.top=(l.y/imageH*displayH)+'px';d.style.fontFamily=l.font;d.style.fontSize=(l.size/imageW*displayW)+'px';d.style.color=l.color;d.style.textAlign=l.align;d.style.width=(l.width/imageW*displayW)+'px';d.onpointerdown=e=>{e.stopPropagation();selected={type:'layer',id:l.id};syncControls();let r=overlay.getBoundingClientRect();drag={id:l.id,dx:e.clientX-r.left-l.x/imageW*displayW,dy:e.clientY-r.top-l.y/imageH*displayH,displayW,displayH};d.setPointerCapture(e.pointerId)};d.onpointermove=e=>{if(!drag||drag.id!==l.id)return;let r=overlay.getBoundingClientRect();l.x=Math.max(0,(e.clientX-r.left-drag.dx)/displayW*imageW);l.y=Math.max(0,(e.clientY-r.top-drag.dy)/displayH*imageH);d.style.left=(l.x/imageW*displayW)+'px';d.style.top=(l.y/imageH*displayH)+'px'};d.onpointerup=()=>drag=null;overlay.appendChild(d)});
+ };
+ stage.innerHTML='';stage.appendChild(work);
+}
+function renderLists(){
+ $('regions').innerHTML=regions.length?'':'<div class="muted">No regions detected.</div>';
+ regions.forEach(r=>{let d=document.createElement('div');d.className='item'+(selected.type==='region'&&selected.id===r.id?' active':'');d.textContent=r.text+' · '+Math.round(r.confidence*100)+'%';d.onclick=()=>{selected={type:'region',id:r.id};syncControls()};$('regions').appendChild(d)});
+ $('layers').innerHTML=layers.length?'':'<div class="muted">No text layers.</div>';
+ layers.forEach(l=>{let d=document.createElement('div');d.className='item'+(selected.type==='layer'&&selected.id===l.id?' active':'');d.textContent=l.text;d.onclick=()=>{selected={type:'layer',id:l.id};syncControls()};$('layers').appendChild(d)});
+}
+$('upload').onchange=e=>{let f=e.target.files[0];if(!f)return;if(!['image/jpeg','image/png','image/webp'].includes(f.type)){status('Please upload JPG, PNG or WebP.');return}if(f.size>15*1024*1024){status('Maximum upload size is 15 MB.');return}imageFile=f;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=URL.createObjectURL(f);let im=new Image();im.onload=()=>{imageW=im.naturalWidth;imageH=im.naturalHeight;regions=[];layers=[];selected={type:null,id:null};enable(true);render();syncControls();status(`Loaded ${imageW} × ${imageH}px image.`)};im.src=imageUrl};
+$('detect').onclick=async()=>{if(!imageFile)return;status('Detecting text. First OCR run may take a few minutes while the model downloads.');$('detect').disabled=true;try{let fd=new FormData();fd.append('file',imageFile);let r=await fetch('/api/ocr',{method:'POST',body:fd});let data=await r.json();if(!r.ok)throw Error(data.detail||'OCR request failed');regions=data.regions;selected=regions.length?{type:'region',id:regions[0].id}:{type:null,id:null};render();syncControls();status(`Detected ${regions.length} text regions. Select a region to edit.`)}catch(e){status('OCR error: '+e.message)}finally{$('detect').disabled=false}};
+$('remove').onclick=async()=>{let r=regions.find(x=>x.id===selected.id);if(!r||selected.type!=='region')return;status('Removing selected text…');$('remove').disabled=true;try{let fd=new FormData();fd.append('file',imageFile);fd.append('regions_json',JSON.stringify([r]));let res=await fetch('/api/inpaint',{method:'POST',body:fd});if(!res.ok){let j=await res.json();throw Error(j.detail||'Inpainting failed')}let blob=await res.blob();let newFile=new File([blob],'restored.png',{type:'image/png'});imageFile=newFile;if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=URL.createObjectURL(blob);regions=regions.filter(x=>x.id!==r.id);selected={type:null,id:null};render();syncControls();status('Selected region processed. Add replacement text using + Add text.')}catch(e){status('Removal error: '+e.message)}finally{$('remove').disabled=false}};
+$('add').onclick=()=>{let l={id:crypto.randomUUID(),text:'Your text',x:imageW*.1,y:imageH*.1,width:imageW*.8,size:Math.max(20,imageW*.035),font:'Arial',color:'#171717',align:'left'};layers.push(l);selected={type:'layer',id:l.id};syncControls();status('Text layer added. Edit it and drag it into position.')};
+['text','font','size','color','align'].forEach(id=>$(id).addEventListener('input',()=>{let l=getSelected();if(!l||selected.type!=='layer')return;l.text=$('text').value;l.font=$('font').value;l.size=+$('size').value;l.color=$('color').value;l.align=$('align').value;$('sizeVal').textContent=l.size;render();renderLists()}));
+$('delete').onclick=()=>{if(selected.type!=='layer')return;layers=layers.filter(x=>x.id!==selected.id);selected={type:null,id:null};syncControls()};
+$('export').onclick=async()=>{if(!imageUrl)return;let im=new Image();im.onload=()=>{let out=document.createElement('canvas');out.width=imageW;out.height=imageH;let ctx=out.getContext('2d');ctx.drawImage(im,0,0);layers.forEach(l=>{ctx.font=`${l.size}px "${l.font}"`;ctx.fillStyle=l.color;ctx.textAlign=l.align;ctx.textBaseline='top';let x=l.align==='center'?l.x+l.width/2:l.align==='right'?l.x+l.width:l.x;ctx.fillText(l.text,x,l.y,l.width)});out.toBlob(blob=>{let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pixeltext-edited.png';a.click();URL.revokeObjectURL(a.href);status('PNG exported at original image dimensions.')},'image/png')};im.src=imageUrl};
+window.addEventListener('resize',()=>{if(imageUrl)render()});
+</script>
+</body>
+</html>
